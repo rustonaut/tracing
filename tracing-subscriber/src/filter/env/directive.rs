@@ -459,6 +459,8 @@ impl SpanMatcher {
 
 #[cfg(test)]
 mod test {
+    use field::ValueMatch;
+
     use super::*;
 
     fn parse_directives(dirs: impl AsRef<str>) -> Vec<Directive> {
@@ -863,5 +865,89 @@ mod test {
 
         let dirs = parse_directives(format!("target[{}]=info", invalid_span_name));
         assert_eq!(dirs.len(), 0, "\nparsed: {:#?}", dirs);
+    }
+
+    #[test]
+    fn parsing_directives_with_quoted_strings() {
+        {
+            let dir = "[{foo=foo}]".parse::<Directive>().unwrap();
+            assert_eq!(dir.fields.len(), 1, "\nparsed fields: {:#?}", dir.fields);
+            assert_eq!(dir.fields[0].name, "foo");
+            let Some(ValueMatch::Pat(pattern)) = &dir.fields[0].value else {
+                panic!("unexpected value type: {:?}", dir.fields[0].value);
+            };
+            assert_eq!((**pattern).as_ref(), "foo");
+        }
+
+        {
+            let dir = "[{s_foo=\"foo\"}]".parse::<Directive>().unwrap();
+            assert_eq!(dir.fields.len(), 1, "\nparsed fields: {:#?}", dir.fields);
+            assert_eq!(dir.fields[0].name, "s_foo");
+            let Some(ValueMatch::Pat(pattern)) = &dir.fields[0].value else {
+                panic!("unexpected value type: {:?}", dir.fields[0].value);
+            };
+            // Not stripping the `"` is intended behavior, they are frequently needed due
+            // to `#[instrument]` by default debug logging all fields.
+            assert_eq!((**pattern).as_ref(), "\"foo\"");
+        }
+
+        {
+            let dir = "[{n=1}]".parse::<Directive>().unwrap();
+            assert_eq!(dir.fields.len(), 1, "\nparsed fields: {:#?}", dir.fields);
+            assert_eq!(dir.fields[0].name, "n");
+            assert_eq!(dir.fields[0].value, Some(ValueMatch::U64(1)));
+        }
+
+        {
+            let dir = "[{s_n=\"1\"}]".parse::<Directive>().unwrap();
+            assert_eq!(dir.fields.len(), 1, "\nparsed fields: {:#?}", dir.fields);
+            assert_eq!(dir.fields[0].name, "s_n");
+            let Some(ValueMatch::Pat(pattern)) = &dir.fields[0].value else {
+                panic!("unexpected value type: {:?}", dir.fields[0].value);
+            };
+            // We need to include the quote for debug string fields (from `#[instrument]`),
+            // but at the same time this means we can never filter for debug/display
+            // recorded integer (boolenas, or floats) without changing the syntax or
+            // matching primitive values on both the value and a display/debug repr.
+            assert_eq!((**pattern).as_ref(), "\"1\"");
+        }
+
+        {
+            let dir = "[{broken=1\"}]".parse::<Directive>().unwrap();
+            assert_eq!(dir.fields.len(), 1, "\nparsed fields: {:#?}", dir.fields);
+            assert_eq!(dir.fields[0].name, "broken");
+            let Some(ValueMatch::Pat(pattern)) = &dir.fields[0].value else {
+                panic!("unexpected value type: {:?}", dir.fields[0].value);
+            };
+            // It looks like it should be an error, but changing that would be a breaking change.
+            assert_eq!((**pattern).as_ref(), "1\"");
+        }
+    }
+
+    #[test]
+    fn parsing_directives_with_multi_dot_fields() {
+        // FIXME: Is this a bug? Fixing could be a breaking change?
+        let dir = "[{f...}]".parse::<Directive>().unwrap();
+        assert_eq!(dir.fields.len(), 1, "\nparsed fields: {:#?}", dir.fields);
+        assert_eq!(dir.fields[0].name, "f...");
+
+        // FIXME: Is this a bug? Fixing could be a breaking change?
+        let dir = "[{.foo}]".parse::<Directive>().unwrap();
+        assert_eq!(dir.fields.len(), 1, "\nparsed fields: {:#?}", dir.fields);
+        assert_eq!(dir.fields[0].name, "foo");
+
+        // FIXME: Is this a bug? Fixing could be a breaking change?
+        let dir = "[{.foo,.bar}]".parse::<Directive>().unwrap();
+        assert_eq!(dir.fields.len(), 2, "\nparsed fields: {:#?}", dir.fields);
+        assert_eq!(dir.fields[0].name, "foo,");
+        assert_eq!(dir.fields[1].name, "bar");
+
+        // FIXME: Is this a bug? Fixing could be a breaking change?
+        let dir = "[{..}]".parse::<Directive>().unwrap();
+        assert_eq!(dir.fields.len(), 0, "\nparsed fields: {:#?}", dir.fields);
+
+        // FIXME: Is this a bug? Fixing could be a breaking change?
+        let dir = "[{.,.}]".parse::<Directive>().unwrap();
+        assert_eq!(dir.fields.len(), 0, "\nparsed fields: {:#?}", dir.fields);
     }
 }
