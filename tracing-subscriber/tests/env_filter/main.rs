@@ -1,6 +1,7 @@
 #![cfg(feature = "env-filter")]
 
 mod per_subscriber;
+mod value_filters;
 
 use tracing::{self, collect::with_default, Level};
 use tracing_mock::{collector, expect};
